@@ -1,0 +1,267 @@
+<title>Scala 2.10 Reflection and Macros</title>
+
+<section>
+	<h2>Scala 2.10 Reflection and Macros</h2>
+	<h4 class="fragment">compile-time and run-time metaprogramming</h4>
+	<h4 class="fragment">or how I learned to love the reification of the compiler API</h4>
+</section>
+
+<section>
+	<blockquote>
+Metaprogramming is the writing of computer programs that write or manipulate other programs or themselves as their data.
+—Wikipedia
+	</blockquote>
+</section>
+
+<section>
+	<p>some of the good and the bad:</p>
+	<p class="fragment">a significant bit of the compiler API is now exposed</p>
+</section>
+
+<section>
+	<p>Part of the compiler was refactored using the "multiple cake pattern" to provide a unified API at runtime as reflection and compile time as macros.</p>
+	<p class="fragment">some background: <a href="http://channel9.msdn.com/Events/Lang-NEXT/Lang-NEXT-2012/Reflection-and-Compilers">Martin Odersky: Reflection and Compilers</a>
+</section>
+
+<section>
+	<p>Documentation is still a bit scarce. I imagine this will be improving soon with the final release of 2.10.0.</p>
+</section>
+
+<section>
+	<p>This presentation heavily quotes <a href="http://scalamacros.org">scalamacros.org</a> and the Scaladocs.</p>
+</section>
+
+<section>
+	<p>learn by exploration</p>
+	<ul>
+		<li>compiler flags</li>
+		<ul>
+			<li>-Xprint:parser (for naked trees)</li>
+			<li>-Xprint:typer (for typechecked trees)</li>
+			<li>-Yshow-trees and its cousins</li>
+			<li>-Xprint-types</li>
+			<li>-explaintypes</li>
+			<li>check out <a href="https://github.com/scala/scala/blob/v2.10.0/src/compiler/scala/tools/nsc/settings/ScalaSettings.scala">ScalaSettings.scala</a></li>
+		</ul>
+			<li>at the REPL</li>
+			<ul>
+				<li>
+					<pre><code contenteditable class="scala">
+scala> import reflect.runtime.universe._
+import reflect.runtime.universe._
+
+scala> showRaw(reify { 42 })
+res0: String = Expr(Literal(Constant(42)))
+					</code></pre>
+				</li>
+			</ul>
+	</ul>
+</section>
+
+<section>
+	<p>get to know scala's AST</p>
+	<p>
+		<ul>
+			<li><a href="https://github.com/scala/scala/blob/v2.10.0/src/reflect/scala/reflect/api/Trees.scala">Trees.scala</a> in compiler source</li>
+			<li><a href="http://scala-refactoring.org/wp-content/uploads/scala-refactoring.pdf">Scala Refactoring, Mirko Stocker's master's thesis</a>, section describing the scala AST, p95, old but still likely relevant, I've only skimmed this sofar</li>
+			<li><a href="http://www.scala-lang.org/node/598">Compiler Internals</a>, walk-through sessions by Martin Odersky, older but still useful I imagine, haven't had the chance to check these out yet</li>
+		</ul>
+	</p>
+</section>
+
+<section>
+	<h2>universes and mirrors</h2>
+	<blockquote cite="http://scalamacros.org">
+		Universes are environments that pack together trees, symbols and
+their types.
+	</blockquote>
+	<blockquote cite="http://scalamacros.org">
+	Mirrors abstract population of symbol tables. Each universe can have multiple mirrors, which can share symbols
+with each other within their parent universe.
+	</blockquote>
+</section>
+
+<section>
+	<p>a universe provides interface for the following:</p>
+	<ul>
+		<li>Types → types</li>
+		<li>Symbols → definitions</li>
+		<li>Trees → abstract syntax trees</li>
+		<li>Names → term and type names</li>
+		<li>Annotations → annotations</li>
+		<li>Positions → source positions of tree nodes</li>
+		<li>FlagSet → sets of flags that apply to symbols and definition trees</li>
+		<li>Constants → compile-time constants</li>
+	</ul>
+</section>
+
+<section>
+	<h2>reflection examples</h2>
+</section>
+
+
+<section>
+	<h4>inspect members</h4>
+	<pre><code contenteditable class="scala">
+scala> import reflect.runtime.universe._
+import reflect.runtime.universe._
+
+scala> class Z { def theAnswer = 42 }
+defined class Z
+
+scala> typeOf[Z]
+res0: reflect.runtime.universe.Type = Z
+
+scala> res0.members
+res1: reflect.runtime.universe.MemberScope = Scopes(method theAnswer, constructor Z, ...method $asInstanceOf, method $isInstanceOf, method synchronized, method ...
+	</code></pre>
+</section>
+
+<section>
+	<h4>type signature</h4>
+	<pre><code contenteditable class="scala">
+scala> import reflect.runtime.universe._
+import reflect.runtime.universe._
+
+scala> class Z { def theAnswer = 42 }
+defined class Z
+
+scala> typeOf[Z]
+res0: reflect.runtime.universe.Type = Z
+
+scala> res0.member(newTermName("theAnswer")).asMethod.typeSignature
+res1: reflect.runtime.universe.Type = => scala.Int
+	</code></pre>
+</section>
+
+<section>
+	<h4>invoke method</h4>
+	<pre><code contenteditable class="scala">
+scala> import reflect.runtime.universe._
+import reflect.runtime.universe._
+
+scala> runtimeMirror(getClass.getClassLoader)
+res0: reflect.runtime.universe.Mirror = JavaMirror with scala.tools.nsc.interpre...
+
+scala> class Z { def theAnswer = 42 }
+defined class Z
+
+scala> typeOf[Z]
+res1: reflect.runtime.universe.Type = Z
+
+scala> res1.declaration(newTermName("theAnswer")).asMethod
+res2: reflect.runtime.universe.MethodSymbol = method theAnswer
+
+scala> res0.reflect(new Z)
+res4: reflect.runtime.universe.InstanceMirror = instance mirror for Z@27833133
+
+scala> res4.reflectMethod(res2)
+res5: reflect.runtime.universe.MethodMirror = method mirror for Z.theAnswer: scala.Int (bound to Z@27833133)
+
+scala> res5()
+res7: Any = 42
+	</code></pre>
+</section>
+
+<section>
+	<h4>handle erasure</h4>
+	<p style="font-size: 60%; font-style: italic">RIP Manifest</p>
+	<pre><code contenteditable class="scala">
+scala> import reflect.runtime.universe._
+import reflect.runtime.universe._
+
+scala> runtimeMirror(getClass.getClassLoader)
+res0: reflect.runtime.universe.Mirror = JavaMirror with scala.tools.nsc.interpre...
+
+scala> def i[T : TypeTag](x: T) = typeOf[T] match {
+     |    case i if i =:= typeOf[List[String]] => "List of String"
+     |    case i if i =:= typeOf[List[Int]] => "List of Int"
+     |    case i => "other" 
+     | }
+i: [T](x: T)(implicit evidence$1: reflect.runtime.universe.TypeTag[T])String
+
+scala> i(List(42))
+res0: String = List of Int
+
+scala> i(List("boz"))
+res1: String = List of String
+
+scala> i("zed")
+res2: String = other
+	</code></pre>
+</section>
+
+<section>
+	<p>reflection API is rich and complex</p>
+	<p class="fragment">much more than what you've seen here</p>
+	<p class="fragment">happy hunting</p>
+</section>
+
+<section>
+	<h2>macros<h2>
+	<h4 class="fragment">reminiscent of Lisp macros</h4>
+	<h4 class="fragment">written in full-fledged Scala</h4>
+	<h4 class="fragment">works on expression trees</h4>
+	<h4 class="fragment">adapted to incorporate type safety and rich syntax</h4>
+	<h4 class="fragment">cannot change syntax of Scala</h4>
+</section>
+
+<section>
+	<blockquote cite="http://scalamacros.org">
+		Macros are functions that are called by the compiler during compilation. Within these functions the programmer has access to compiler APIs. For example, it is possible to generate, analyze and typecheck code.
+	</blockquote>
+</section>
+
+
+<section>
+	<h2>possible uses</h2>
+	<ul class="fragment">
+		<li>Advanced domain-specific languages</li>
+		<li>Language integrated queries</li>
+		<li>Type providers</li>
+		<li>Integration of external DSLs</li>
+		<li>Aspect-oriented programming</li>
+		<li>Type-safe bindings</li>
+		<li>Generation of boilerplate</li>
+		<li>Data types "a la carte"</li>
+		<li>Units of measure</li>
+	</ul>
+</section>
+
+<section>
+	<h2>macro examples</h2>
+	<p>didn't have time to make slides, we can go to some <a href="https://github.com/drostron/macros-exploration">exploratory code</a> if we want</p>
+</section>
+
+<!--
+
+TODO
+* organize code examples
+* add somewhere scala-reflect dependency
+* look for an embedded DSL example, what I've learned so far is limited in that respect
+* come up with a more interesting examples, possibly canonical, such as if else
+* need for a bit of background on macros? definition, lisp example? other?
+* running reflection and macros, dependencies, commands, imports, inspection, ...
+* idease for examples to work through: json, sql, ...
+
+-->
+
+<section>
+	<h3>keep tabs on, <a href="http://docs.scala-lang.org/overviews/reflection/thread-safety.html">thread safety issue</a></h3 >
+</section>
+
+<section>
+	<h2>future</h2>
+	<ul>
+		<li>explore projects using macros
+			<ul>
+				<li><a href="http://slick.typesafe.com/">slick</a> (prolly deserves a presentation on its own)</li>
+				<li><a href="http://mandubian.com/2012/11/11/JSON-inception/">Play 2.1 JSON API - Inception</a></li>
+				<li><a href="https://github.com/iron9light/lift-json">lift-json for Scala 2.10</a></li>
+				<li>...</li>
+			</ul>	
+		</li>	
+		<li>compare and contrast with scala-virtualized</li>
+		<li>dream up and write some examples motivated by pragmatic use cases</li>
+	</ul>
+</section>
